@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USA Court District Map</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.8.0/ol.css">
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        #map {
+            width: 100%;
+            height: 100vh;
+        }
+        #controls {
+            position: absolute;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.829);
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+            line-height: 1.4;
+
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px 14px;
+            max-width: 50%;
+            
+        }
+        #controls .control-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+
+        #controls label {
+            margin-right: 0;
+            min-width: auto;
+        }
+
+        #controls select,
+        #controls button {
+            margin-bottom: 0;
+        }
+        #legend {
+            position: absolute;
+            right: 10px;
+            bottom: 20px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.894);
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            min-width: 180px;
+            font-size: 13px;
+            line-height: 1.4;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .legend-row {
+            display: flex;
+            align-items: center;
+            margin: 4px 0;
+            gap: 8px;
+        }
+
+        .legend-swatch {
+            width: 22px;
+            height: 14px;
+            border: 2px solid #000;
+            box-sizing: border-box;
+            flex: 0 0 auto;
+        }
+        label {
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+        select {
+            margin-bottom: 6px;
+        }
+        .title {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.788);
+            padding: 10px 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+            font-size: 20px;
+            font-weight: bold;
+        }
+        #mbtaNavBtn {
+            position: absolute;
+            top: 10px;
+            left: 64px;
+            z-index: 1000;
+            display: inline-block;
+            background: #ed8b00;
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 700;
+            text-decoration: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        #mbtaNavBtn:hover {
+            background: #d67c00;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.75);
+            padding: 10px;
+            border: 2px solid #e3f9ff;
+            border-radius: 5px;
+            max-width: 360px;
+            font: 14px/1.4 sans-serif;
+            white-space: pre-wrap;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        #aboutPanel {
+            position: absolute;
+            left: 10px;
+            bottom: 10px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.85);
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            max-width: 300px;
+            font-size: 13px;
+            line-height: 1.4;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        #aboutHeader {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 10px;
+            background: rgba(245, 245, 245, 0.95);
+            cursor: pointer;
+        }
+        #aboutToggle {
+            border: 1px solid #bbb;
+            background: white;
+            border-radius: 4px;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+            padding: 0;
+        }
+        #aboutContent {
+            padding: 8px 10px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        #aboutPanel.collapsed {
+            width: 180px;
+        }
+        #aboutPanel.collapsed #aboutContent {
+            display: none;
+        }
+        #timeSlider {
+            width: 180px;
+        }
+
+        #timeLabel {
+            font-size: 12px;
+            color: #444;
+            min-width: 60px;
+            display: inline-block;
+        }
+
+        .hover-label {
+            position: absolute;
+            z-index: 1200;
+            pointer-events: none;
+            background: rgba(255, 255, 255, 0.96);
+            border: 2px solid #333;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            line-height: 1.35;
+            color: #111;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+            white-space: nowrap;
+        }
+        .hover-title {
+            text-align: center;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .hover-value {
+            text-align: left;
+        }
+
+        #chartPanel {
+            position: absolute;
+            top: 220px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(255,255,255,0.90);
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            width: 380px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        #chartTitle {
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        #chartPanel canvas {
+            width: 100%;
+            display: block;
+            margin-bottom: 10px;
+            background: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div class="title">U.S. Bankruptcy by Court District</div>
+    <a id="mbtaNavBtn" href="index.html">MBTA Tracker</a>
+    <div id="map"></div>
+    <div id="hoverLabel" class="hover-label" style="display:none;"></div>
+    <div id="controls">
+        <!-- <div>
+            <label for="fieldSelect">Field:</label>
+            <select id="fieldSelect">
+                <option value="ALL_24" selected>All chapters total, 2024</option>
+                <option value="A7_24">Chapter 7 total, 2024</option>
+                <option value="A11_24">Chapter 11 total, 2024</option>
+                <option value="A13_24">Chapter 13 total, 2024</option>
+                <option value="AOTH24">Other chapters total, 2024</option>
+                <option value="A9_24">Chapter 9 total, 2024</option>
+                <option value="A12_24">Chapter 12 total, 2024</option>
+                <option value="A15_24">Chapter 15 total, 2024</option>
+
+                <option value="ALL_25">All chapters total, 2025</option>
+                <option value="A7_25">Chapter 7 total, 2025</option>
+                <option value="A11_25">Chapter 11 total, 2025</option>
+                <option value="A13_25">Chapter 13 total, 2025</option>
+                <option value="AOTH25">Other chapters total, 2025</option>
+                <option value="A9_25">Chapter 9 total, 2025</option>
+                <option value="A12_25">Chapter 12 total, 2025</option>
+                <option value="A15_25">Chapter 15 total, 2025</option>
+
+                <option value="BALL24">Business all chapters total, 2024</option>
+                <option value="BALL25">Business all chapters total, 2025</option>
+                <option value="B7_24">Business Chapter 7, 2024</option>
+                <option value="B7_25">Business Chapter 7, 2025</option>
+                <option value="B11_24">Business Chapter 11, 2024</option>
+                <option value="B11_25">Business Chapter 11, 2025</option>
+                <option value="B13_24">Business Chapter 13, 2024</option>
+                <option value="B13_25">Business Chapter 13, 2025</option>
+                <option value="BOTH24">Business other chapters total, 2024</option>
+                <option value="BOTH25">Business other chapters total, 2025</option>
+
+                <option value="NALL24">Nonbusiness all chapters total, 2024</option>
+                <option value="NALL25">Nonbusiness all chapters total, 2025</option>
+                <option value="N7_24">Nonbusiness Chapter 7, 2024</option>
+                <option value="N7_25">Nonbusiness Chapter 7, 2025</option>
+                <option value="N11_24">Nonbusiness Chapter 11, 2024</option>
+                <option value="N11_25">Nonbusiness Chapter 11, 2025</option>
+                <option value="N13_24">Nonbusiness Chapter 13, 2024</option>
+                <option value="N13_25">Nonbusiness Chapter 13, 2025</option>
+                <option value="NOTH24">Nonbusiness other chapters total, 2024</option>
+                <option value="NOTH25">Nonbusiness other chapters total, 2025</option>
+
+                <option value="A7SH24">Chapter 7 share of ALL_24</option>
+                <option value="A7SH25">Chapter 7 share of ALL_25</option>
+                <option value="A11SH24">Chapter 11 share of ALL_24</option>
+                <option value="A11SH25">Chapter 11 share of ALL_25</option>
+                <option value="A13SH24">Chapter 13 share of ALL_24</option>
+                <option value="A13SH25">Chapter 13 share of ALL_25</option>
+                <option value="AOTH24S">Other chapters share of ALL_24</option>
+                <option value="AOTH25S">Other chapters share of ALL_25</option>
+                <option value="A9SH24">Chapter 9 share of ALL_24</option>
+                <option value="A9SH25">Chapter 9 share of ALL_25</option>
+                <option value="A12SH24">Chapter 12 share of ALL_24</option>
+                <option value="A12SH25">Chapter 12 share of ALL_25</option>
+                <option value="A15SH24">Chapter 15 share of ALL_24</option>
+                <option value="A15SH25">Chapter 15 share of ALL_25</option>
+                <option value="B7SH24">Business Chapter 7 share of BALL24</option>
+                <option value="B7SH25">Business Chapter 7 share of BALL25</option>
+                <option value="B11SH24">Business Chapter 11 share of BALL24</option>
+                <option value="B11SH25">Business Chapter 11 share of BALL25</option>
+                <option value="B13SH24">Business Chapter 13 share of BALL24</option>
+                <option value="B13SH25">Business Chapter 13 share of BALL25</option>
+                <option value="BOTH24S">Business other chapters share of BALL24</option>
+                <option value="BOTH25S">Business other chapters share of BALL25</option>
+                <option value="N7SH24">Nonbusiness Chapter 7 share of NALL24</option>
+                <option value="N7SH25">Nonbusiness Chapter 7 share of NALL25</option>
+                <option value="N11SH24">Nonbusiness Chapter 11 share of NALL24</option>
+                <option value="N11SH25">Nonbusiness Chapter 11 share of NALL25</option>
+                <option value="N13SH24">Nonbusiness Chapter 13 share of NALL24</option>
+                <option value="N13SH25">Nonbusiness Chapter 13 share of NALL25</option>
+                <option value="NOTH24S">Nonbusiness other chapters share of NALL24</option>
+                <option value="NOTH25S">Nonbusiness other chapters share of NALL25</option>
+
+                <option value="ALLPC24">All chapters per 100 population, 2024</option>
+                <option value="ALLPC25">All chapters per 100 population, 2025</option>
+                <option value="A7PC24">Chapter 7 per 100 population, 2024</option>
+                <option value="A7PC25">Chapter 7 per 100 population, 2025</option>
+                <option value="A11PC24">Chapter 11 per 100 population, 2024</option>
+                <option value="A11PC25">Chapter 11 per 100 population, 2025</option>
+                <option value="A13PC24">Chapter 13 per 100 population, 2024</option>
+                <option value="A13PC25">Chapter 13 per 100 population, 2025</option>
+                <option value="AOTHPC24">Other chapters per 100 population, 2024</option>
+                <option value="AOTHPC25">Other chapters per 100 population, 2025</option>
+                <option value="A9PC24">Chapter 9 per 100 population, 2024</option>
+                <option value="A9PC25">Chapter 9 per 100 population, 2025</option>
+                <option value="A12PC24">Chapter 12 per 100 population, 2024</option>
+                <option value="A12PC25">Chapter 12 per 100 population, 2025</option>
+                <option value="A15PC24">Chapter 15 per 100 population, 2024</option>
+                <option value="A15PC25">Chapter 15 per 100 population, 2025</option>
+                <option value="BALLPC24">Business all chapters per 100 population, 2024</option>
+                <option value="BALLPC25">Business all chapters per 100 population, 2025</option>
+                <option value="B7PC24">Business Chapter 7 per 100 population, 2024</option>
+                <option value="B7PC25">Business Chapter 7 per 100 population, 2025</option>
+                <option value="B11PC24">Business Chapter 11 per 100 population, 2024</option>
+                <option value="B11PC25">Business Chapter 11 per 100 population, 2025</option>
+                <option value="B13PC24">Business Chapter 13 per 100 population, 2024</option>
+                <option value="B13PC25">Business Chapter 13 per 100 population, 2025</option>
+                <option value="BOTHPC24">Business other chapters per 100 population, 2024</option>
+                <option value="BOTHPC25">Business other chapters per 100 population, 2025</option>
+                <option value="NALLPC24">Nonbusiness all chapters per 100 population, 2024</option>
+                <option value="NALLPC25">Nonbusiness all chapters per 100 population, 2025</option>
+                <option value="N7PC24">Nonbusiness Chapter 7 per 100 population, 2024</option>
+                <option value="N7PC25">Nonbusiness Chapter 7 per 100 population, 2025</option>
+                <option value="N11PC24">Nonbusiness Chapter 11 per 100 population, 2024</option>
+                <option value="N11PC25">Nonbusiness Chapter 11 per 100 population, 2025</option>
+                <option value="N13PC24">Nonbusiness Chapter 13 per 100 population, 2024</option>
+                <option value="N13PC25">Nonbusiness Chapter 13 per 100 population, 2025</option>
+                <option value="NOTHPC24">Nonbusiness other chapters per 100 population, 2024</option>
+                <option value="NOTHPC25">Nonbusiness other chapters per 100 population, 2025</option>
+
+                <option value="ALLACHG">Absolute change in all chapters total</option>
+                <option value="A7ACHG">Absolute change in Chapter 7</option>
+                <option value="A11ACHG">Absolute change in Chapter 11</option>
+                <option value="A13ACHG">Absolute change in Chapter 13</option>
+                <option value="AOTHCHG">Absolute change in other chapters total</option>
+                <option value="A9ACHG">Absolute change in Chapter 9</option>
+                <option value="A12ACHG">Absolute change in Chapter 12</option>
+                <option value="A15ACHG">Absolute change in Chapter 15</option>
+                <option value="BALLCHG">Absolute change in business all chapters total</option>
+                <option value="B7ACHG">Absolute change in business Chapter 7</option>
+                <option value="B11ACHG">Absolute change in business Chapter 11</option>
+                <option value="B13ACHG">Absolute change in business Chapter 13</option>
+                <option value="BOTHCHG">Absolute change in business other chapters total</option>
+                <option value="NALLCHG">Absolute change in nonbusiness all chapters total</option>
+                <option value="N7ACHG">Absolute change in nonbusiness Chapter 7</option>
+                <option value="N11ACHG">Absolute change in nonbusiness Chapter 11</option>
+                <option value="N13ACHG">Absolute change in nonbusiness Chapter 13</option>
+                <option value="NOTHCHG">Absolute change in nonbusiness other chapters total</option>
+
+                <option value="ALLPCHG">Percent change in all chapters total</option>
+                <option value="A7PCHG">Percent change in Chapter 7</option>
+                <option value="A11PCHG">Percent change in Chapter 11</option>
+                <option value="A13PCHG">Percent change in Chapter 13</option>
+                <option value="AOTHPCHG">Percent change in other chapters total</option>
+                <option value="A9PCHG">Percent change in Chapter 9</option>
+                <option value="A12PCHG">Percent change in Chapter 12</option>
+                <option value="A15PCHG">Percent change in Chapter 15</option>
+                <option value="BALLPCHG">Percent change in business all chapters total</option>
+                <option value="B7PCHG">Percent change in business Chapter 7</option>
+                <option value="B11PCHG">Percent change in business Chapter 11</option>
+                <option value="B13PCHG">Percent change in business Chapter 13</option>
+                <option value="BOTHPCHG">Percent change in business other chapters total</option>
+                <option value="NALLPCHG">Percent change in nonbusiness all chapters total</option>
+                <option value="N7PCHG">Percent change in nonbusiness Chapter 7</option>
+                <option value="N11PCHG">Percent change in nonbusiness Chapter 11</option>
+                <option value="N13PCHG">Percent change in nonbusiness Chapter 13</option>
+                <option value="NOTHPCHG">Percent change in nonbusiness other chapters total</option>
+
+                <option value="ALLCCHG">Change in all chapters per 100 population</option>
+                <option value="A7CCHG">Change in Chapter 7 per 100 population</option>
+                <option value="A11CCHG">Change in Chapter 11 per 100 population</option>
+                <option value="A13CCHG">Change in Chapter 13 per 100 population</option>
+                <option value="AOTHCCHG">Change in other chapters per 100 population</option>
+                <option value="A9CCHG">Change in Chapter 9 per 100 population</option>
+                <option value="A12CCHG">Change in Chapter 12 per 100 population</option>
+                <option value="A15CCHG">Change in Chapter 15 per 100 population</option>
+                <option value="BALLCCHG">Change in business all chapters per 100 population</option>
+                <option value="B7CCHG">Change in business Chapter 7 per 100 population</option>
+                <option value="B11CCHG">Change in business Chapter 11 per 100 population</option>
+                <option value="B13CCHG">Change in business Chapter 13 per 100 population</option>
+                <option value="BOTHCCHG">Change in business other chapters per 100 population</option>
+                <option value="NALLCCHG">Change in nonbusiness all chapters per 100 population</option>
+                <option value="N7CCHG">Change in nonbusiness Chapter 7 per 100 population</option>
+                <option value="N11CCHG">Change in nonbusiness Chapter 11 per 100 population</option>
+                <option value="N13CCHG">Change in nonbusiness Chapter 13 per 100 population</option>
+                <option value="NOTHCCHG">Change in nonbusiness other chapters per 100 population</option>
+            </select>
+        </div> -->
+        <div class="control-group">
+            <label for="yearSelect">Year:</label>
+            <select id="yearSelect"></select>
+        </div>
+        <div class="control-group">
+            <label for="monthSelect">Month:</label>
+            <select id="monthSelect"></select>
+        </div>
+        <div class="control-group">
+            <label for="debtorTypeSelect">Debtor type:</label>
+            <select id="debtorTypeSelect">
+                <option value="all" selected>All</option>
+                <option value="business">Business</option>
+                <option value="nonbusiness">Nonbusiness</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="chapterSelect">Chapter:</label>
+            <select id="chapterSelect">
+                <option value="all" selected>All chapters</option>
+                <option value="7">Chapter 7</option>
+                <option value="9">Chapter 9</option>
+                <option value="11">Chapter 11</option>
+                <option value="12">Chapter 12</option>
+                <option value="13">Chapter 13</option>
+                <option value="15">Chapter 15</option>
+                <option value="OTH">Other chapters</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="metricSelect">Metric:</label>
+            <select id="metricSelect">
+                <option value="cases" selected>Total amount</option>
+                <option value="per100pop">Per 100 population</option>
+                <option value="per100hh">Per 100 households</option>
+                <option value="per100labor">Per 100 labor force</option>
+                <option value="per100unemp">Per 100 unemployed</option>
+                <option value="per100pop16">Per 100 population age 16+</option>
+                <option value="perIncomeBillion">Cases per $1B aggregate household income</option>
+                <option value="share">Share of all filings</option>
+                <option value="momAbs">Month-to-month change</option>
+                <option value="momPct">Month-to-month % change</option>
+                <option value="yoyAbs">Year-over-year change</option>
+                <option value="yoyPct">Year-over-year % change</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="classCount">Classes:</label>
+            <select id="classCount">
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5" selected>5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="paletteSelect">Color Setting:</label>
+            <select id="paletteSelect">
+                <option value="turquoisePink" selected>Turquoise → Orange → Pink</option>
+                <option value="greenYellowRed">Green → Yellow → Red</option>
+                <option value="purpleRoseOrange">Purple → Rose → Orange</option>
+            </select>
+            <!-- <button id="hoverToggle">Hover labels: On</button> -->
+        </div>
+            <div class="control-group">
+            <button id="playToggle">Play</button>
+        </div>
+
+        <div class="control-group">
+            <button id="hoverToggle">Hover labels: On</button>
+        </div>
+        <div class="control-group">
+            <label for="speedSelect">Speed:</label>
+            <select id="speedSelect">
+                <option value="1500">Slow</option>
+                <option value="1000" selected>Normal</option>
+                <option value="500">Fast</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="timeSlider">Progress:</label>
+            <input type="range" id="timeSlider" min="0" max="0" value="0" step="1">
+        </div>
+        <div class="control-group">
+            <span id="timeLabel">--</span>
+        </div>
+    </div>
+
+    <div id="legend"></div>
+    <div id="info">Click a feature to Get Info</div>
+
+    <div id="chartPanel">
+        <div id="chartTitle"><strong>District charts</strong></div>
+        <canvas id="trendChart" width="360" height="180"></canvas>
+        <canvas id="compositionChart" width="360" height="140"></canvas>
+    </div>
+
+    <div id="aboutPanel"  class="expanded">
+        <div id="aboutHeader">
+            <strong>About this map</strong>
+            <button id="aboutToggle" type="button">−</button>
+        </div>
+        <div id="aboutContent">
+            <strong>Data:</strong><br>
+            U.S. bankruptcy indicators by court district, including chapter totals, business and nonbusiness counts, shares, per-capita values, and change measures.<br><br>
+
+            <strong>Chapter guide:</strong><br>
+            <strong>All chapters</strong> = total filings across all included bankruptcy chapters.<br>
+            <strong>Chapter 7</strong> = liquidation.<br>
+            <strong>Chapter 9</strong> = municipal debt adjustment.<br>
+            <strong>Chapter 11</strong> = reorganization, commonly used in business restructuring.<br>
+            <strong>Chapter 12</strong> = debt adjustment for family farmers and family fishers.<br>
+            <strong>Chapter 13</strong> = repayment plan for individuals.<br>
+            <strong>Chapter 15</strong> = cross-border insolvency proceedings.<br>
+            <strong>Other chapters</strong> = grouped chapter types not displayed separately in the main chapter list.<br><br>
+
+            <strong>Business classification:</strong><br>
+            <strong>Business</strong> = filings identified as business-related.<br>
+            <strong>Nonbusiness</strong> = filings identified as nonbusiness, generally personal or household-related cases.<br><br>
+
+            <strong>Metric guide:</strong><br>
+            <strong>Total</strong> = filing count.<br>
+            <strong>Share</strong> = proportion within the relevant total.<br>
+            <strong>Per-capita</strong> = filings per 100 population.<br>
+            <strong>Absolute change</strong> = year-to-year numeric difference.<br>
+            <strong>Percent change</strong> = year-to-year percentage difference.<br>
+            <strong>Per-capita change</strong> = year-to-year difference in filings per 100 population.<br><br>
+
+            <strong>Data source:</strong><br>
+            U.S. bankruptcy, court district, and population: <br>US Supreme Court
+            <br>https://www.uscourts.gov/data-news/reports/statistical-reports/bankruptcy-filings-statistics<br>
+
+            <strong>Platform:</strong><br>
+            This map is built with OpenLayers and hosted as a lightweight static website.<br><br>
+
+            <strong>Design note:</strong><br>
+            The site is intentionally simple so it can remain portable, fast to load, and workable on a limited free hosting setup.
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/ol@v10.8.0/dist/ol.js"></script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

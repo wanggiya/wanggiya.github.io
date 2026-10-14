@@ -1,0 +1,11 @@
+# Local API keys / secrets
+js/secrets.js
+cloudflare/
+
+# Dependencies / build
+node_modules/
+dist/
+.DS_Store
+*.log
+
+*.zip
