@@ -1,5 +1,11 @@
 import { WORKER_URL, REFRESH_MS } from './config.js';
-import { recordPosition, createPlayback, advancePlayback } from './vehicle-motion.js';
+import { VehicleTracker, TRACKER_OPTIONS } from './vehicle-motion.js';
+import {
+  VehicleDisplay,
+  MOTION_PROFILES,
+  DISPLAY_OPTIONS,
+  profileForRoute,
+} from './vehicle-display.js';
 const $ = (id) => document.getElementById(id);
 // ---- Modes, configuration and saved preferences ----
 const MODES = [
@@ -7,6 +13,8 @@ const MODES = [
   { type: 1, name: 'Subway', icon: 'T', color: '#da291c' },
   { type: 2, name: 'Commuter rail', icon: 'CR', color: '#80276c' },
   { type: 3, name: 'Bus', icon: 'B', color: '#aa7200' },
+  // UI-only group 5; the API and motion profile still treat Silver Line as bus.
+  { type: 5, name: 'Silver Line', icon: 'SL', color: '#7c878e' },
   { type: 4, name: 'Ferry', icon: 'F', color: '#007da5' },
 ];
 const safeRead = (key) => {
@@ -63,6 +71,7 @@ $('theme-light').onclick = () => setTheme(false);
 $('theme-dark').onclick = () => setTheme(true);
 applyTheme();
 function modeType(route) {
+  if (isSilverLine(route)) return 5;
   return route?.id === 'Mattapan' ? 1 : route?.attributes.type;
 }
 
@@ -86,10 +95,24 @@ let loaded = 0,
   lastFetch = 0,
   vehicleError = '',
   popupFeature = null;
-// Keep L(n-2t), L(n-t), L(n), and one persistent playback clock per vehicle.
-// recordPosition shifts out the oldest report as each new sample arrives.
+// One independent local-meter Kalman filter per vehicle. No raw-position fallback.
 const reportedPositions = new Map();
-const playbackStates = new Map();
+const vehicleTrackers = new Map();
+const vehicleDisplays = new Map();
+const drawEntries = new Map();
+let canvasHits = [];
+let paintRevision = 0;
+vehicleSource.on('removefeature', ({ feature }) => {
+  const id = feature.getId();
+  vehicleTrackers.delete(id);
+  vehicleDisplays.delete(id);
+  drawEntries.delete(id);
+  reportedPositions.delete(id);
+});
+
+// Anchor wall time to a monotonic clock; OS clock changes cannot reverse prediction.
+const trackingEpoch = Date.now() - performance.now();
+const trackingTime = () => trackingEpoch + performance.now();
 let smoothMovement = safeRead('mbta-smooth-movement') !== 'off';
 const isStale = (f) =>
   !Number.isFinite(Date.parse(f.get('updated_at'))) ||
@@ -143,7 +166,7 @@ function appearanceFor(route) {
       type === 2 ||
       ['Red', 'Mattapan', 'Blue'].includes(route.id) ||
       isSilverLine(route));
-  const blackOutline = type === 3 || route.id === 'Orange';
+  const blackOutline = route?.attributes.type === 3 || route.id === 'Orange';
   const grayStopFill = dark && (type === 0 || route.id === 'Blue' || isSilverLine(route));
   const whiteStopFill = !dark || type === 2;
 
@@ -173,7 +196,7 @@ function styleFor(kind, feature) {
   const stale = kind === 'vehicles' && isStale(feature);
   const appearance = appearanceFor(route);
   const outline =
-    kind === 'stops' && !dark && modeType(route) === 3
+    kind === 'stops' && !dark && route?.attributes.type === 3
       ? '#111820'
       : dark
         ? appearance.outline
@@ -248,17 +271,20 @@ function styleFor(kind, feature) {
 // ---- OpenLayers map and feature details ----
 const routeLayer = new ol.layer.Vector({
   source: routeSource,
+  zIndex: 2,
   style: (f) => styleFor('lines', f),
 });
 const stopLayer = new ol.layer.Vector({
   source: stopSource,
+  zIndex: 3,
   style: (f) => styleFor('stops', f),
   renderBuffer: 20,
   declutter: true,
 });
 const vehicleLayer = new ol.layer.Vector({
   source: vehicleSource,
-  style: (f) => styleFor('vehicles', f),
+  // Vehicle bodies and halos are drawn together on the dedicated canvas.
+  style: () => null,
 });
 const map = new ol.Map({
   target: 'map',
@@ -316,14 +342,17 @@ function showPopup(f) {
         (age === null ? 'unknown' : `${age}s ago${age > 90 ? ' · stale' : ''}`),
       node,
     );
-    const speed = f.get('speed');
-    if (typeof speed === 'number') line(`Speed: ${(speed * 3.6).toFixed(0)} km/h`, node);
+    const speed = drawEntries.get(f.getId())?.speedMps ?? f.get('filteredSpeedMps');
+    if (typeof speed === 'number')
+      line(`Estimated speed: ${(speed * 3.6).toFixed(0)} km/h`, node);
+    const heading = drawEntries.get(f.getId())?.heading ?? f.get('filteredHeading');
+    if (Number.isFinite(heading)) line(`Estimated heading: ${heading.toFixed(0)}°`, node);
     line('Next/current stop ID: ' + (f.get('stopId') || 'Not reported'), node);
     line('Vehicle ID: ' + f.getId(), node);
     line(
       smoothMovement
-        ? 'Display: continuous estimated motion'
-        : 'Display: latest MBTA-reported position',
+        ? 'Display: buffered Kalman estimates'
+        : 'Display: Kalman-filtered GPS updates',
       node,
     );
   } else if (kind === 'stop') {
@@ -332,23 +361,36 @@ function showPopup(f) {
   }
   $('popup').hidden = false;
   popup.setPosition(
-    f.getGeometry().getType() === 'Point'
-      ? f.getGeometry().getCoordinates()
-      : map.getView().getCenter(),
+    (kind === 'vehicle' && drawEntries.get(f.getId())?.coordinate) ||
+      (f.getGeometry().getType() === 'Point'
+        ? f.getGeometry().getCoordinates()
+        : map.getView().getCenter()),
   );
   popupFeature = f;
 }
 map.on('singleclick', (event) => {
-  const f = map.forEachFeatureAtPixel(event.pixel, (f) => f, {
-    hitTolerance: 5,
-    layerFilter: (l) => l === stopLayer || l === vehicleLayer,
-  });
+  let nearest = null;
+  let distance = 11;
+  for (const hit of canvasHits) {
+    const d = Math.hypot(hit.pixel[0] - event.pixel[0], hit.pixel[1] - event.pixel[1]);
+    if (d < distance) {
+      nearest = hit.feature;
+      distance = d;
+    }
+  }
+  const f =
+    nearest ||
+    map.forEachFeatureAtPixel(event.pixel, (f) => f, {
+      hitTolerance: 5,
+      layerFilter: (l) => l === stopLayer || l === vehicleLayer,
+    });
   if (f) showPopup(f);
   else closePopup();
 });
 // Avoid full-network hit detection on every mouse movement; points remain clickable.
 
 function redraw() {
+  paintRevision++;
   routeLayer.changed();
   stopLayer.changed();
   vehicleLayer.changed();
@@ -536,7 +578,7 @@ function buildControls() {
       const row = document.createElement('label');
       row.className = 'route-row';
       row.dataset.search =
-        `${r.id} ${r.attributes.short_name || ''} ${r.attributes.long_name || ''}`.toLowerCase();
+        `${r.id} ${r.attributes.short_name || ''} ${r.attributes.long_name || ''} ${isSilverLine(r) ? 'silver line silverline' : ''}`.toLowerCase();
       const check = document.createElement('input');
       check.type = 'checkbox';
       check.checked = true;
@@ -779,7 +821,7 @@ async function loadNetwork() {
     updateCounts();
   }
 }
-// ---- Live polling and bounded position interpolation ----
+// ---- Live polling and local-meter Kalman tracking ----
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
   nextFetchAt = 0;
@@ -789,90 +831,93 @@ function scheduleRefresh() {
   }
   updateStatus();
 }
-/** Accept valid source samples without ever resetting the animation clock. */
-function receiveVehiclePosition(feature, attributes) {
-  const id = feature.getId();
-  const coordinates = ol.proj.fromLonLat([attributes.longitude, attributes.latitude]);
-  const old = reportedPositions.get(id);
-  const reportTime = Date.parse(attributes.updated_at);
-  const receivedAt = Date.now();
-  let history = recordPosition(old?.history || [], coordinates, reportTime, receivedAt);
-  const duplicate = old && history === old.history;
-  if (duplicate) return; // Cached/void updates cannot restart playback.
-
-  const discontinuity =
-    old &&
-    Math.hypot(
-      coordinates[0] - old.coordinates[0],
-      coordinates[1] - old.coordinates[1],
-    ) >= 10000;
-  if (discontinuity) {
-    history = history.slice(-1);
-    playbackStates.delete(id);
-  }
-  reportedPositions.set(id, {
-    coordinates: coordinates.slice(),
-    reportTime,
-    receivedAt,
-    history,
-  });
-  const canSmooth =
-    smoothMovement &&
-    liveEnabled &&
-    !reducedMotion.matches &&
-    !isStale(feature) &&
-    history.length >= 2;
-  if (!canSmooth || discontinuity || !feature.getGeometry()) {
-    playbackStates.delete(id);
-    feature.setGeometry(new ol.geom.Point(coordinates));
-    return;
-  }
-  if (!playbackStates.has(id)) {
-    playbackStates.set(
-      id,
-      createPlayback(history, feature.getGeometry().getCoordinates(), performance.now()),
-    );
-  }
+/** GPS-rate geometry for indexing/integration only. Animated drawing does
+ * not mutate OpenLayers features, so the vector layer is not rebuilt per frame.
+ */
+function renderVehicleTrack(feature, tracker) {
+  const filtered = tracker.sample(tracker.posterior.time, false);
+  const coordinate = ol.proj.fromLonLat(filtered.lonLat);
+  if (!feature.getGeometry()) feature.setGeometry(new ol.geom.Point(coordinate));
+  else feature.getGeometry().setCoordinates(coordinate);
+  feature.setProperties(
+    { filteredHeading: filtered.heading, filteredSpeedMps: filtered.speedMps },
+    true,
+  );
 }
 
-function snapToReportedPositions() {
-  playbackStates.clear();
-  for (const [id, report] of reportedPositions) {
-    const feature = vehicleSource.getFeatureById(id);
-    if (feature) feature.setGeometry(new ol.geom.Point(report.coordinates.slice()));
+/** GPS is assimilated once per distinct source timestamp, never once per poll. */
+function receiveVehiclePosition(feature, attributes) {
+  const id = feature.getId();
+  let tracker = vehicleTrackers.get(id);
+  const route = routeById.get(attributes._routeId || feature.get('routeId'));
+  const profileName = profileForRoute(route);
+  const profile = MOTION_PROFILES[profileName];
+  if (!tracker)
+    tracker = new VehicleTracker({
+      ...TRACKER_OPTIONS,
+      processNoise: profile.processNoise,
+      maxPredictionSeconds: profile.seconds,
+    });
+  tracker.options = Object.freeze({
+    ...tracker.options,
+    processNoise: profile.processNoise,
+    maxPredictionSeconds: profile.seconds,
+  });
+  const reportTime = Date.parse(attributes.updated_at);
+  const result = tracker.updateGPS(
+    [attributes.longitude, attributes.latitude],
+    reportTime,
+    trackingTime(),
+  );
+  feature.set('trackingStatus', result.reason, true);
+  if (!result.accepted) return false;
+  vehicleTrackers.set(id, tracker);
+  reportedPositions.set(id, { reportTime, receivedAt: trackingTime() });
+  renderVehicleTrack(feature, tracker);
+  let display = vehicleDisplays.get(id);
+  if (!display) {
+    display = new VehicleDisplay(profile);
+    vehicleDisplays.set(id, display);
   }
+  display.profile = profile;
+  display.push(
+    tracker.sample(reportTime, false),
+    trackingTime(),
+    attributes.current_status === 'STOPPED_AT',
+  );
+  const previous = drawEntries.get(id);
+  const projected = display.samples.map((sample) =>
+    ol.proj.fromLonLat(tracker.frame.toLonLat(sample.position)),
+  );
+  const bounds = ol.extent.boundingExtent(projected);
+  drawEntries.set(id, {
+    feature,
+    tracker,
+    display,
+    profileName,
+    bounds: ol.extent.buffer(bounds, profile.meters * 2 + 50),
+    coordinate: previous?.coordinate || feature.getGeometry().getCoordinates().slice(),
+    appearanceRevision: -1,
+  });
+  return true;
 }
 
 function updateMovementButton() {
   $('smooth-movement').setAttribute('aria-checked', String(smoothMovement));
+  $('smooth-movement').querySelector('span').textContent = 'Smooth vehicle motion';
   $('smooth-movement').querySelector('.switch-status').firstChild.textContent =
     smoothMovement ? 'On ' : 'Off ';
   $('movement-note').textContent = smoothMovement
-    ? 'Continuous estimated motion from valid reports; may lag.'
-    : 'Showing the latest MBTA-reported positions.';
+    ? `Buffered filtered motion (about ${Math.max(2, intervalSeconds) + DISPLAY_OPTIONS.jitterSeconds}s or more behind live); prediction limits vary by mode.`
+    : 'Filtered GPS positions; animated presentation is off.';
 }
 
 function setSmoothMovement(enabled) {
-  smoothMovement = enabled;
+  smoothMovement = Boolean(enabled);
   try {
-    localStorage.setItem('mbta-smooth-movement', enabled ? 'on' : 'off');
+    localStorage.setItem('mbta-smooth-movement', smoothMovement ? 'on' : 'off');
   } catch {}
-  if (!enabled) snapToReportedPositions();
-  else {
-    for (const [id, report] of reportedPositions) {
-      const feature = vehicleSource.getFeatureById(id);
-      if (feature && report.history.length >= 2 && !isStale(feature)) {
-        playbackStates.set(
-          id,
-          createPlayback(
-            report.history,
-            feature.getGeometry().getCoordinates(),
-            performance.now(),
-          ),
-        );
-      }
-    }
-  }
+  paintRevision++;
   updateMovementButton();
   if (popupFeature?.get('kind') === 'vehicle') showPopup(popupFeature);
   vehicleLayer.changed();
@@ -932,6 +977,11 @@ async function refreshVehicles() {
       )
         continue;
 
+      if (!receiveVehiclePosition(feature, { ...attributes, _routeId: routeId })) {
+        // A cached timestamp is normal when polling faster than the feed updates.
+        if (feature.get('trackingStatus') === 'duplicate-or-old') validReports++;
+        continue;
+      }
       feature.setProperties({
         ...attributes,
         kind: 'vehicle',
@@ -939,13 +989,12 @@ async function refreshVehicles() {
         routeId,
         stopId: vehicle.relationships?.stop?.data?.id,
       });
-      receiveVehiclePosition(feature, attributes);
       validReports++;
       if (isNew) vehicleSource.addFeature(feature);
     }
 
     // Allow brief omissions/partial responses instead of blinking a marker off.
-    // Persistently absent vehicles still release all history and playback state.
+    // Persistently absent vehicles still release all report and Kalman state.
     const missingGrace = Math.min(120000, Math.max(30000, intervalSeconds * 2000));
     for (const feature of vehicleSource.getFeatures()) {
       const id = feature.getId();
@@ -957,7 +1006,9 @@ async function refreshVehicles() {
       feature.set('_missingSince', missingSince, true);
       if (Date.now() - missingSince >= missingGrace) {
         vehicleSource.removeFeature(feature);
-        playbackStates.delete(id);
+        vehicleTrackers.delete(id);
+        vehicleDisplays.delete(id);
+        drawEntries.delete(id);
         reportedPositions.delete(id);
       }
     }
@@ -985,8 +1036,6 @@ $('refresh').onclick = refreshVehicles;
 $('retry').onclick = loadNetwork;
 $('pause').onclick = () => {
   liveEnabled = !liveEnabled;
-  const now = performance.now();
-  for (const state of playbackStates.values()) state.lastFrame = now;
   refreshGeneration++;
   clearTimeout(refreshTimer);
   nextFetchAt = 0;
@@ -1004,6 +1053,7 @@ function setIntervalSeconds(value) {
   $('refresh-interval').value = String(intervalSeconds);
   $('refresh-slider').value = String(intervalSeconds);
   $('interval-text').textContent = intervalSeconds;
+  updateMovementButton();
   try {
     localStorage.setItem('mbta-refresh-seconds', String(intervalSeconds));
   } catch {}
@@ -1019,102 +1069,125 @@ $('refresh-interval').onchange = $('refresh-interval').onblur = () => {
   setIntervalSeconds(Number.isFinite(value) ? value : intervalSeconds);
 };
 document.addEventListener('visibilitychange', () => {
-  for (const state of playbackStates.values()) state.lastFrame = performance.now();
   refreshGeneration++;
   clearTimeout(refreshTimer);
   nextFetchAt = 0;
   if (!document.hidden && liveEnabled) refreshVehicles();
   updateStatus();
 });
-// Animate halos on a separate canvas so static route/stop layers are not repainted every frame.
-// ---- Lightweight halo canvas and animation loop ----
+// ---- One canvas for vehicle bodies, halos and screen-space picking ----
 const haloCanvas = document.createElement('canvas');
 haloCanvas.className = 'vehicle-halos';
 haloCanvas.setAttribute('aria-hidden', 'true');
-map.getViewport().append(haloCanvas);
+// Keep the canvas below OpenLayers popups/controls, with no pointer interception.
+map
+  .getViewport()
+  .insertBefore(haloCanvas, map.getViewport().querySelector('.ol-overlaycontainer'));
 const haloContext = haloCanvas.getContext('2d');
-function drawHalos(now) {
+const renderingStats = { visible: 0, total: 0, drawMilliseconds: 0 };
+let lastAppearanceUpdate = 0;
+
+function drawVehicles(now) {
+  const start = performance.now();
   const size = map.getSize();
-  if (!size || !haloContext) return;
-  const ratio = Math.min(devicePixelRatio || 1, 2);
-  if (
-    haloCanvas.width !== Math.round(size[0] * ratio) ||
-    haloCanvas.height !== Math.round(size[1] * ratio)
-  ) {
-    haloCanvas.width = Math.round(size[0] * ratio);
-    haloCanvas.height = Math.round(size[1] * ratio);
+  if (!size) return;
+  const ratio = Math.min(DISPLAY_OPTIONS.pixelRatioCap, devicePixelRatio || 1);
+  const width = Math.round(size[0] * ratio),
+    height = Math.round(size[1] * ratio);
+  if (haloCanvas.width !== width || haloCanvas.height !== height) {
+    haloCanvas.width = width;
+    haloCanvas.height = height;
   }
   haloContext.setTransform(ratio, 0, 0, ratio, 0, 0);
   haloContext.clearRect(0, 0, size[0], size[1]);
-  if (reducedMotion.matches || !vehicleLayer.getVisible() || document.hidden) return;
-  const phase = (1 + Math.sin(now / 650)) / 2,
-    extent = map.getView().calculateExtent(size);
-  for (const f of vehicleSource.getFeaturesInExtent(extent)) {
-    const c = visibleColor(f, 'vehicles');
-    if (!c || isStale(f)) continue;
-    const pixel = map.getPixelFromCoordinate(f.getGeometry().getCoordinates());
-    if (!pixel) continue;
-    haloContext.beginPath();
-    haloContext.arc(pixel[0], pixel[1], 5 + phase * 4, 0, Math.PI * 2);
-    haloContext.fillStyle = rgba(c, 0.12 + (1 - phase) * 0.1);
-    haloContext.fill();
+  canvasHits = [];
+  renderingStats.total = drawEntries.size;
+  if (!vehicleLayer.getVisible()) {
+    renderingStats.visible = 0;
+    return;
   }
+  const extent = map.getView().calculateExtent(size);
+  const margin = map.getView().getResolution() * 40;
+  const padded = ol.extent.buffer(extent, margin);
+  const time = trackingTime();
+  const refreshAppearance = now - lastAppearanceUpdate >= 200;
+  if (refreshAppearance) lastAppearanceUpdate = now;
+  const phase = (1 + Math.sin(now / 650)) / 2;
+  const animated = smoothMovement && !reducedMotion.matches;
+  // Painting styles are cached and paths batched by color/outline/staleness.
+  const groups = new Map();
+  for (const entry of drawEntries.values()) {
+    if (refreshAppearance || entry.appearanceRevision !== paintRevision) {
+      entry.color = visibleColor(entry.feature, 'vehicles');
+      const appearance = appearanceFor(routeById.get(entry.feature.get('routeId')));
+      entry.outline = appearance.outline || (dark ? '#f2f8fa' : '#fff');
+      entry.stale = isStale(entry.feature);
+      entry.appearanceRevision = paintRevision;
+    }
+    if (!entry.color) continue;
+    // Historical filtered positions bound the buffered path. Offscreen tracks
+    // retain measurements but require no per-frame Kalman/projection work.
+    if (
+      !ol.extent.intersects(padded, entry.bounds) &&
+      !ol.extent.containsCoordinate(padded, entry.coordinate)
+    )
+      continue;
+    const sample = entry.display.sample(time, intervalSeconds, animated, !liveEnabled);
+    if (!sample) continue;
+    entry.coordinate = ol.proj.fromLonLat(entry.tracker.frame.toLonLat(sample.position));
+    entry.heading = sample.heading;
+    entry.speedMps = sample.speedMps;
+    const pixel = map.getPixelFromCoordinate(entry.coordinate);
+    if (
+      !pixel ||
+      pixel[0] < -12 ||
+      pixel[1] < -12 ||
+      pixel[0] > size[0] + 12 ||
+      pixel[1] > size[1] + 12
+    )
+      continue;
+    canvasHits.push({ feature: entry.feature, pixel });
+    const fill = entry.stale ? '#849298' : entry.color;
+    const key = `${fill}|${entry.outline}|${entry.stale}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { fill, outline: entry.outline, stale: entry.stale, pixels: [] };
+      groups.set(key, group);
+    }
+    group.pixels.push(pixel);
+  }
+  for (const group of groups.values()) {
+    if (!reducedMotion.matches && !group.stale) {
+      haloContext.beginPath();
+      const radius = 5 + phase * 4;
+      for (const [x, y] of group.pixels) {
+        haloContext.moveTo(x + radius, y);
+        haloContext.arc(x, y, radius, 0, Math.PI * 2);
+      }
+      haloContext.fillStyle = rgba(group.fill, 0.12 + (1 - phase) * 0.1);
+      haloContext.fill();
+    }
+    haloContext.beginPath();
+    for (const [x, y] of group.pixels) {
+      haloContext.moveTo(x + 3.4, y);
+      haloContext.arc(x, y, 3.4, 0, Math.PI * 2);
+    }
+    haloContext.fillStyle = group.fill;
+    haloContext.strokeStyle = group.outline;
+    haloContext.lineWidth = 1.2;
+    haloContext.fill();
+    haloContext.stroke();
+  }
+  if (popupFeature?.get('kind') === 'vehicle') {
+    const entry = drawEntries.get(popupFeature.getId());
+    if (entry) popup.setPosition(entry.coordinate);
+  }
+  renderingStats.visible = canvasHits.length;
+  renderingStats.drawMilliseconds = performance.now() - start;
 }
-let lastFrame = 0;
 function animate(now) {
   requestAnimationFrame(animate);
-  if (document.hidden || now - lastFrame < 33) return;
-  lastFrame = now;
-  const extent = ol.extent.buffer(
-    map.getView().calculateExtent(map.getSize()),
-    map.getView().getResolution() * 30,
-  );
-  for (const [id, state] of playbackStates) {
-    const feature = vehicleSource.getFeatureById(id);
-    const report = reportedPositions.get(id);
-    if (!feature || !report) {
-      playbackStates.delete(id);
-      continue;
-    }
-    if (!liveEnabled) {
-      state.lastFrame = now;
-      continue;
-    }
-    if (isStale(feature) && smoothMovement && !reducedMotion.matches) {
-      state.lastFrame = now;
-      state.kind = 'held';
-      continue; // Gray and hold the display; a stale/void poll must not jump it backward.
-    }
-    if (!smoothMovement || reducedMotion.matches) {
-      feature.getGeometry().setCoordinates(report.coordinates.slice());
-      playbackStates.delete(id);
-      continue;
-    }
-    advancePlayback(
-      state,
-      report.history,
-      now,
-      intervalSeconds * 1000,
-      feature.get('current_status') === 'STOPPED_AT',
-    );
-    // Retain clock/speed everywhere; redraw geometry only where it matters.
-    const current = feature.getGeometry().getCoordinates();
-    if (
-      vehicleLayer.getVisible() &&
-      visibleColor(feature, 'vehicles') &&
-      (ol.extent.containsCoordinate(extent, state.position) ||
-        ol.extent.containsCoordinate(extent, current))
-    ) {
-      if (
-        Math.hypot(state.position[0] - current[0], state.position[1] - current[1]) > 0.01
-      ) {
-        feature.getGeometry().setCoordinates(state.position.slice());
-      }
-    }
-  }
-  if (popupFeature?.get('kind') === 'vehicle')
-    popup.setPosition(popupFeature.getGeometry().getCoordinates());
-  drawHalos(now);
+  if (!document.hidden) drawVehicles(now);
 }
 requestAnimationFrame(animate);
 setInterval(() => {
@@ -1160,8 +1233,83 @@ async function start() {
 }
 start();
 
+/** A snapshot of exactly the enabled layers/routes. A shared stop is emitted
+ * once with its visible modes; the analysis can assign one explicit weight.
+ */
+function getVisibleNetworkSnapshot() {
+  const modeKey = (route) =>
+    isSilverLine(route)
+      ? 'silver'
+      : route?.id === 'Mattapan'
+        ? 'subway'
+        : { 0: 'lightRail', 1: 'subway', 2: 'commuter', 3: 'bus', 4: 'ferry' }[
+            route?.attributes.type
+          ];
+  const lines = [],
+    stops = [],
+    vehicles = [];
+  const enabledKinds = {};
+  for (const kind of ['lines', 'stops', 'vehicles']) {
+    const layer = { lines: routeLayer, stops: stopLayer, vehicles: vehicleLayer }[kind];
+    enabledKinds[kind] =
+      layer.getVisible() && [...routeById.keys()].some((id) => visibleRoute(id, kind));
+  }
+  if (enabledKinds.lines)
+    for (const feature of routeSource.getFeatures()) {
+      const id = feature.get('routeId');
+      if (visibleRoute(id, 'lines'))
+        lines.push({
+          routeId: id,
+          mode: modeKey(routeById.get(id)),
+          coordinates: feature
+            .getGeometry()
+            .getCoordinates()
+            .map((point) => ol.proj.toLonLat(point)),
+        });
+    }
+  if (enabledKinds.stops)
+    for (const feature of stopSource.getFeatures()) {
+      const ids = routeIds(feature).filter((id) => visibleRoute(id, 'stops'));
+      if (ids.length)
+        stops.push({
+          id: String(feature.getId()),
+          coordinate: ol.proj.toLonLat(feature.getGeometry().getCoordinates()),
+          modes: [...new Set(ids.map((id) => modeKey(routeById.get(id))))],
+        });
+    }
+  let excludedStaleVehicles = 0;
+  if (enabledKinds.vehicles)
+    for (const feature of vehicleSource.getFeatures()) {
+      const id = feature.get('routeId');
+      if (!visibleRoute(id, 'vehicles')) continue;
+      if (isStale(feature)) {
+        excludedStaleVehicles++;
+        continue;
+      }
+      const coordinate =
+        drawEntries.get(feature.getId())?.coordinate ||
+        feature.getGeometry().getCoordinates();
+      vehicles.push({
+        id: String(feature.getId()),
+        mode: modeKey(routeById.get(id)),
+        coordinate: ol.proj.toLonLat(coordinate),
+      });
+    }
+  return {
+    lines,
+    stops,
+    vehicles,
+    enabledKinds,
+    capturedAt: new Date().toISOString(),
+    excludedStaleVehicles,
+    loadedRoutes: loaded,
+    totalRoutes: routeById.size,
+  };
+}
+
 // Public integration context for your custom tools. Existing MBTA layers remain separate.
 export const interactionContext = {
+  getVisibleNetworkSnapshot,
   map,
   routeSource,
   stopSource,
@@ -1177,4 +1325,27 @@ export const interactionContext = {
   getRefreshSeconds: () => intervalSeconds,
   setRefreshSeconds: setIntervalSeconds,
   setSmoothMovement,
+  // Returns a defensive snapshot: local ENU meters, filtered lon/lat, velocity,
+  // heading (degrees clockwise from local ENU north), covariance and gating diagnostics.
+  getDisplayedVehicle: (id) => {
+    const entry = drawEntries.get(String(id));
+    if (!entry) return null;
+    return {
+      lonLat: ol.proj.toLonLat(entry.coordinate),
+      heading: entry.heading,
+      speedMps: entry.speedMps,
+      profile: entry.profileName,
+      delaySeconds: entry.display.last?.delaySeconds || 0,
+      kind: entry.display.last?.kind || 'initializing',
+    };
+  },
+  getVehicleRenderStats: () => ({ ...renderingStats }),
+  getVehicleTrack: (id) => {
+    const tracker = vehicleTrackers.get(String(id));
+    if (!tracker) return null;
+    return {
+      ...tracker.sample(trackingTime(), smoothMovement && !reducedMotion.matches),
+      diagnostics: { ...tracker.diagnostics },
+    };
+  },
 };

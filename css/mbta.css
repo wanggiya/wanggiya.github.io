@@ -726,7 +726,11 @@ body.dark #data-warning {
   }
 }
 
-.vehicle-halos {
+/* OpenLayers sets `.ol-viewport canvas { all: unset; }`.
+ * This selector must be more specific or the basemap can cover our canvas.
+ */
+.ol-viewport > canvas.vehicle-halos {
+  display: block;
   position: absolute;
   inset: 0;
   width: 100%;
@@ -958,4 +962,88 @@ body.dark .theme-choices button[aria-pressed='true'] {
     width: 23px;
     height: 23px;
   }
+}
+
+.interaction-panel {
+  position: absolute;
+  top: 90px;
+  left: 58px;
+  z-index: 30;
+  width: min(300px, calc(100vw - 76px));
+  max-height: calc(100dvh - 180px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 8px 28px #0003;
+}
+
+.interaction-panel [hidden],
+.interaction-panel[hidden] {
+  display: none;
+}
+
+.interaction-heading,
+.interaction-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.interaction-tools,
+.grid-settings {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.grid-settings {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.grid-settings label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.interaction-panel button,
+.interaction-panel select,
+.interaction-panel input {
+  box-sizing: border-box;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+}
+
+.interaction-panel button {
+  cursor: pointer;
+}
+
+.interaction-panel select,
+.interaction-panel input {
+  width: 100%;
+}
+
+.interaction-tools > button {
+  text-align: left;
+}
+
+.interaction-actions > button {
+  flex: 1;
+}
+
+#grid-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
 }
