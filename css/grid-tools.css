@@ -1,0 +1,200 @@
+/* Scoped to the interaction tools; the main map and bankruptcy styles are untouched. */
+#interaction-panel {
+  max-height: calc(100dvh - 130px);
+  overflow-y: auto;
+}
+#interaction-panel .grid-settings {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+#interaction-panel [hidden] {
+  display: none;
+}
+#interaction-panel .grid-settings label {
+  display: grid;
+  gap: 6px;
+}
+#interaction-panel .grid-settings label.grid-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+#interaction-panel .grid-inline input {
+  width: auto;
+  min-height: 0;
+}
+#interaction-panel .grid-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+#interaction-panel .grid-weights {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+#interaction-panel .grid-weights th {
+  text-align: left;
+}
+#interaction-panel .grid-weights td {
+  padding: 4px 0;
+}
+#interaction-panel .grid-weights input {
+  width: 80px;
+  min-height: 32px;
+  padding: 4px 6px;
+}
+#interaction-panel .grid-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  margin-right: 7px;
+  border: 1px solid #6667;
+  vertical-align: middle;
+}
+#interaction-panel button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+#interaction-panel details summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+#interaction-panel details .grid-note {
+  margin: 8px 0;
+}
+#grid-cell-info {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+@media (max-width: 750px) {
+  #interaction-panel {
+    max-height: calc(100dvh - 220px);
+  }
+}
+/* Uniform slide switches: keyboard-accessible native checkboxes underneath. */
+#interaction-panel .grid-switch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 50px 28px;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  min-height: 32px;
+}
+#interaction-panel .grid-settings label.grid-slide {
+  display: block;
+  position: relative;
+  width: 50px;
+  height: 28px;
+  margin: 0;
+}
+#interaction-panel .grid-slide input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+#interaction-panel .grid-slide-track {
+  display: block;
+  height: 28px;
+  border-radius: 20px;
+  background: var(--muted);
+  transition: background 0.15s;
+}
+#interaction-panel .grid-slide-track::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px #0004;
+  transition: transform 0.15s;
+}
+#interaction-panel .grid-slide input:checked + .grid-slide-track {
+  background: var(--teal);
+}
+#interaction-panel .grid-slide input:checked + .grid-slide-track::after {
+  transform: translateX(22px);
+}
+#interaction-panel .grid-slide input:focus-visible + .grid-slide-track {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+#interaction-panel .grid-switch-status {
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+#interaction-panel .grid-paired-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px;
+  align-items: center;
+  gap: 8px;
+}
+#interaction-panel .grid-paired-control input {
+  min-width: 0;
+  width: 100%;
+}
+#interaction-panel .grid-paired-control input[type='range'] {
+  padding: 0;
+}
+#interaction-panel .grid-color-editor {
+  min-width: 0;
+  margin: 10px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+#interaction-panel .grid-color-editor legend {
+  padding: 0 4px;
+  font-size: 12px;
+}
+#interaction-panel .grid-color-row {
+  display: grid;
+  grid-template-columns: 42px repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 6px;
+}
+#interaction-panel .grid-color-row label {
+  font-size: 11px;
+  min-width: 0;
+}
+#interaction-panel .grid-color-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px;
+  min-height: 32px;
+  font-size: 12px;
+}
+#interaction-panel .grid-color-row input[type='color'] {
+  height: 34px;
+  padding: 2px;
+  cursor: pointer;
+}
+#interaction-panel .grid-ramp-preview {
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  margin: 10px 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  #interaction-panel .grid-slide-track,
+  #interaction-panel .grid-slide-track::after {
+    transition: none;
+  }
+}
