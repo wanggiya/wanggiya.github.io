@@ -191,7 +191,7 @@ export function createGridTool(map, getSnapshot) {
           finish();
           reject(
             Error(
-              'Grid worker could not load. Check the copied JS files and local Turf bundle.',
+              'Grid worker could not load. Check the copied JS files and local Turf/H3 bundles.',
             ),
           );
         };

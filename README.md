@@ -87,3 +87,8 @@ Interpolation/projection does not follow route geometry and may cut corners. Ext
 Official MBTA SVG logo/mode assets are included in `assets/mbta/` for your manual replacement. See `assets/mbta/ASSET_SOURCES.md` for the verified source URLs and exact replacement examples. The header now switches between the requested PNG filenames with the theme. Mode letter icons remain available for manual replacement. The dark PNG is a locally rendered filled-circle variant of the official MBTA SVG T path; see asset provenance below.
 
 For a 1-second interval, a single-page vehicle feed can use roughly 60 browser requests/minute per viewer. The Worker has a 1-second shared vehicle cache; MBTA's source timestamps may update less frequently. Faster polling cannot create new reports.
+
+
+## H3 grid update
+
+See [README_H3_UPDATE.md](README_H3_UPDATE.md) for H3 controls, installation, polling versus animation, architecture and Vercel notes, validation, and commit instructions.

@@ -42,6 +42,12 @@
         <p class="intro">
           Choose a mode, expand its routes, and make the network your own.
         </p>
+        <details class="site-architecture">
+          <summary>Static frontend · browser-side analysis</summary>
+          <p>Hosted on GitHub Pages. Grid analysis and vehicle animation run in your browser.
+          A Cloudflare Worker protects the MBTA API key and proxies data requests;
+          no dedicated application server or database is operated for this showcase.</p>
+        </details>
         <div class="legend-key">
           <span><i class="line-key"></i>Line</span
           ><span><i class="stop-key"></i>Stop</span
@@ -130,9 +136,9 @@
           <p id="data-warning" role="status" hidden></p>
         </section>
         <p class="footnote">
-          Positions refresh every <span id="interval-text">15</span> seconds while this
+          Vehicle data is requested every <span id="interval-text">15</span> seconds while this
           tab is visible. A pulse marks a recent report; it does not imply the vehicle is
-          moving. Select a point for details.
+          moving. Animation runs between reports; estimated motion may lag. Select a point for details.
         </p>
       </div>
     </aside>

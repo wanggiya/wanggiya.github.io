@@ -1047,3 +1047,8 @@ body.dark .theme-choices button[aria-pressed='true'] {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* Public architecture note; uses the panel palette in both themes. */
+.site-architecture { margin: 10px 0 14px; font-size: 12px; line-height: 1.5; }
+.site-architecture summary { cursor: pointer; font-weight: 600; }
+.site-architecture p { margin: 7px 0 0; }

@@ -10,7 +10,8 @@
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
-#interaction-panel [hidden] {
+#interaction-panel [hidden],
+#interaction-panel .grid-settings [hidden] {
   display: none;
 }
 #interaction-panel .grid-settings label {
