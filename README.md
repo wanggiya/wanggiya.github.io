@@ -1,3 +1,5 @@
+> **Latest update:** [S2 grids and nearest-stop areas](README_S2_VORONOI.md), including installation, validation, and Git instructions.
+
 # MBTA Transit Atlas — continuous valid-report playback
 
 The default page is the MBTA interactive map. The bankruptcy map remains at `bankruptcy.html`, unchanged from the previous edition. The old `/pages/mbta.html` address redirects to the landing page.

@@ -683,6 +683,7 @@ function addStops(data, routeId) {
         kind: 'stop',
         name: a.name,
         municipality: a.municipality,
+        stationId: s.relationships?.parent_station?.data?.id || null,
         routeIds: [routeId],
       });
       f.setId(s.id);
@@ -1273,6 +1274,8 @@ function getVisibleNetworkSnapshot() {
       if (ids.length)
         stops.push({
           id: String(feature.getId()),
+          name: feature.get('name'),
+          stationId: feature.get('stationId'),
           coordinate: ol.proj.toLonLat(feature.getGeometry().getCoordinates()),
           modes: [...new Set(ids.map((id) => modeKey(routeById.get(id))))],
         });

@@ -191,7 +191,7 @@ export function createGridTool(map, getSnapshot) {
           finish();
           reject(
             Error(
-              'Grid worker could not load. Check the copied JS files and local Turf/H3 bundles.',
+              'Grid worker could not load. Check the copied JS files and local Turf/H3/S2 bundles.',
             ),
           );
         };
@@ -281,6 +281,11 @@ export function createGridTool(map, getSnapshot) {
     },
     isBusy: () => Boolean(worker),
     getMetadata: () => metadata,
+    getArea: (scope = 'view') => {
+      if (scope === 'drawn' && !selection)
+        throw Error('Draw a rectangle or polygon first.');
+      return scope === 'drawn' ? structuredClone(selection) : viewMask();
+    },
     destroy() {
       clear();
       observer.disconnect();

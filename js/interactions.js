@@ -3,6 +3,7 @@ import { createGridTool, METRICS } from './grid-tools.js';
 import { DEFAULT_WEIGHTS } from './grid-math.js';
 import { COLOR_PRESETS, colorEditor, bindColorEditor } from './grid-colors.js';
 import { createAutoAnalysis } from './grid-auto.js';
+import { createStopAreasUI } from './stop-areas-ui.js';
 
 // Keep additional personal interaction tools here; the grid owns its own layers.
 const css = document.createElement('link');
@@ -29,17 +30,27 @@ document.body.insertAdjacentHTML(
  <div class="interaction-heading"><strong>Interactions</strong><button id="close-interactions" type="button" aria-label="Close interactions">×</button></div>
  <div class="interaction-tools"><button id="open-grid-settings" type="button" aria-expanded="false">Draw grid / choose area</button><button id="open-heat-settings" type="button" aria-expanded="false">Cell heatmap / analysis</button><!-- Add future tool buttons here. --></div>
  <form id="grid-settings" class="grid-settings" hidden>
-  <label>Grid type<select id="grid-type"><option value="square">Equal-meter square</option><option value="hexagon">Hexagon</option><option value="right-triangle">Right triangle</option><option value="equilateral-triangle">Equilateral triangle</option><option value="h3">H3 hexagonal index</option></select></label>
+  <label>Grid type<select id="grid-type"><option value="square">Equal-meter square</option><option value="hexagon">Hexagon</option><option value="right-triangle">Right triangle</option><option value="equilateral-triangle">Equilateral triangle</option><option value="h3">H3 hexagonal index</option><option value="s2">S2 quadrilateral index</option></select></label>
   <label id="grid-distance-label">Cell side / triangle leg<input id="grid-distance" type="number" min="0.01" step="any" value="2" required></label>
   <label id="grid-units-label">Units<select id="grid-units"><option value="kilometers">Kilometers</option><option value="miles">Miles</option></select></label>
   <label id="h3-resolution-label" hidden>H3 resolution<select id="h3-resolution">${[5, 6, 7, 8, 9, 10, 11].map((r) => `<option value="${r}" ${r === 8 ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+  <label id="s2-level-label" hidden>S2 level<select id="s2-level">${Array.from(
+    { length: 11 },
+    (_, i) => i + 8,
+  )
+    .map(
+      (level) =>
+        `<option value="${level}" ${level === 13 ? 'selected' : ''}>${level}</option>`,
+    )
+    .join('')}</select></label>
+  <p id="s2-note" class="grid-note" hidden>Higher levels make smaller cells. S2 uses spherical quadrilaterals with varying areas and edge lengths. All cells use the chosen level; density uses each cell’s area.</p>
   <p id="h3-note" class="grid-note" hidden>Higher resolution makes smaller cells. H3 cells have stable global IDs; their areas and edge lengths vary. Full cells touching the boundary are included. Density uses each cell’s area.</p>
   <label>Coverage<select id="grid-scope"><option value="view">Current map view</option><option value="drawn">Drawn rectangle / polygon</option><option value="network">Visible lines, stops or vehicles (union)</option></select></label>
   <div class="interaction-actions"><button id="select-rectangle" type="button">Drag rectangle</button><button id="select-polygon" type="button">Draw polygon</button></div>
   <button id="cancel-area" type="button" hidden>Cancel drawing (Esc)</button>
   <p id="area-message" class="grid-note">Drag a rectangle, or click polygon corners and double-click to finish.</p>
   <label class="grid-inline"><input id="clip-grid" type="checkbox">Clip cells at the view/drawn boundary</label>
-  <p class="grid-note">Metric grids use the chosen edge length; H3 uses a resolution level. Clipped edge cells change shape and use their actual area.</p>
+  <p class="grid-note">Metric grids use the chosen edge length; H3 and S2 use hierarchy levels. Clipped edge cells change shape and use their actual area.</p>
   <details><summary>Grid line appearance</summary>
    ${colorEditor('grid-line-color', 'Grid line color', document.body.classList.contains('dark') ? '#5ad7c5' : '#007c78')}
    <label for="grid-line-width">Line thickness (pixels)</label>
@@ -90,6 +101,7 @@ document.body.insertAdjacentHTML(
 );
 const panel = $('interaction-panel'),
   button = $('interactions-toggle');
+createStopAreasUI({ context: interactionContext, selectionTool: tool, panel });
 button.setAttribute('aria-controls', panel.id);
 button.setAttribute('aria-expanded', 'false');
 function openPanel(open) {
@@ -105,16 +117,22 @@ $('close-interactions').onclick = () => {
 for (const [buttonId, panelId] of [
   ['open-grid-settings', 'grid-settings'],
   ['open-heat-settings', 'heat-settings'],
+  ['open-stop-areas', 'stop-areas-settings'],
 ])
   $(buttonId).onclick = () => {
     const open = $(panelId).hidden;
     if (open) {
-      const otherPanel = panelId === 'grid-settings' ? 'heat-settings' : 'grid-settings';
-      const otherButton =
-        panelId === 'grid-settings' ? 'open-heat-settings' : 'open-grid-settings';
-      $(otherPanel).hidden = true;
-      $(otherButton).setAttribute('aria-expanded', 'false');
-      if (panelId === 'heat-settings') tool.cancelSelection();
+      for (const [otherButton, otherPanel] of [
+        ['open-grid-settings', 'grid-settings'],
+        ['open-heat-settings', 'heat-settings'],
+        ['open-stop-areas', 'stop-areas-settings'],
+      ]) {
+        if (otherPanel !== panelId) {
+          $(otherPanel).hidden = true;
+          $(otherButton).setAttribute('aria-expanded', 'false');
+        }
+      }
+      tool.cancelSelection();
     }
     $(panelId).hidden = !open;
     $(buttonId).setAttribute('aria-expanded', String(open));
@@ -139,13 +157,18 @@ $('grid-scope').onchange = () => {
 };
 function gridTypeChanged() {
   const isH3 = $('grid-type').value === 'h3';
-  $('grid-distance-label').hidden = isH3;
-  $('grid-units-label').hidden = isH3;
-  $('grid-distance').disabled = isH3;
-  $('grid-units').disabled = isH3;
+  const isS2 = $('grid-type').value === 's2';
+  const indexed = isH3 || isS2;
+  $('grid-distance-label').hidden = indexed;
+  $('grid-units-label').hidden = indexed;
+  $('grid-distance').disabled = indexed;
+  $('grid-units').disabled = indexed;
   $('h3-resolution-label').hidden = !isH3;
   $('h3-note').hidden = !isH3;
   $('h3-resolution').disabled = !isH3;
+  $('s2-level-label').hidden = !isS2;
+  $('s2-note').hidden = !isS2;
+  $('s2-level').disabled = !isS2;
 }
 $('grid-type').onchange = gridTypeChanged;
 gridTypeChanged();
@@ -161,6 +184,7 @@ function settings() {
   return {
     type: $('grid-type').value,
     resolution: Number($('h3-resolution').value),
+    level: Number($('s2-level').value),
     distance: $('grid-distance').valueAsNumber,
     units: $('grid-units').value,
     scope: $('grid-scope').value,
@@ -305,7 +329,7 @@ tool.events.addEventListener('result', ({ detail: m }) => {
       .filter((k) => m.enabledKinds[k])
       .join(', ') || 'none';
   $('grid-message').textContent =
-    `${m.cellCount.toLocaleString()} cells · ${m.gridSystem === 'h3' ? `H3 resolution ${m.resolution}` : 'local-meter grid'}.`;
+    `${m.cellCount.toLocaleString()} cells · ${m.gridSystem === 'h3' ? `H3 resolution ${m.resolution}` : m.gridSystem === 's2' ? `S2 level ${m.level}` : 'local-meter grid'}.`;
   $('analysis-message').textContent =
     `Snapshot ${new Date(m.capturedAt).toLocaleTimeString()} · layers: ${kinds}. ${m.excludedStaleVehicles} stale vehicles excluded. ${m.loadedRoutes}/${m.totalRoutes} routes loaded.`;
 });
